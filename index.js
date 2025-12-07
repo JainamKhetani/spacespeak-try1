@@ -6,12 +6,12 @@ const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY || null; // we'll set this in .env
+const API_KEY = process.env.API_KEY || null;
 
 app.use(cors());
 app.use(express.json());
 
-// Simple home route so you don't see "Cannot GET /"
+// Home Route
 app.get("/", (req, res) => {
   res.send("✅ SpeakNotes AI – Lecture Notes API is running");
 });
@@ -19,7 +19,7 @@ app.get("/", (req, res) => {
 // MAIN WORKFLOW ENDPOINT
 app.post("/api/process", (req, res) => {
   try {
-    // 1. Check API key (optional but recommended)
+    // API key check
     if (API_KEY) {
       const clientKey = req.header("x-api-key");
       if (!clientKey || clientKey !== API_KEY) {
@@ -29,7 +29,7 @@ app.post("/api/process", (req, res) => {
       }
     }
 
-    // 2. Get data from SpeakSpace
+    // Extract data from request
     const { prompt, note_id, timestamp } = req.body || {};
 
     if (!prompt || typeof prompt !== "string") {
@@ -39,20 +39,26 @@ app.post("/api/process", (req, res) => {
       });
     }
 
-    // For now, we treat full 'prompt' as lecture text
     const lectureText = prompt;
 
-    // 3. Process lecture into structured notes
+    // Build structured notes
     const notes = generateStructuredNotes(lectureText);
 
-    // 4. Send response
+    // 🔥 Merge EVERYTHING into one big summary for SpeakSpace
+    const mergedText = mergeAllForDisplay(notes);
+
+    // Send result
     return res.json({
       status: "success",
       message: "Lecture notes generated",
       note_id: note_id || null,
       timestamp: timestamp || null,
-      data: notes,
+      data: {
+        summary: mergedText, // SpeakSpace will show EVERYTHING here
+        keyPoints: notes.keyPoints // Also show key points separately
+      }
     });
+
   } catch (err) {
     console.error("Error in /api/process:", err);
     return res.status(500).json({
@@ -65,6 +71,57 @@ app.post("/api/process", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 SpeakNotes API running on http://localhost:${PORT}`);
 });
+
+/* ==================================================
+   MERGE EVERYTHING FOR DISPLAY IN SPEAKSPACE
+   ================================================== */
+
+function mergeAllForDisplay(notes) {
+  let text = `📌 SUMMARY\n${notes.summary}\n\n`;
+
+  text += `📌 KEY POINTS\n${notes.keyPoints.map(k => "- " + k).join("\n")}\n\n`;
+
+  if (notes.definitions.length > 0) {
+    text += `📌 DEFINITIONS\n`;
+    notes.definitions.forEach(d => {
+      text += `• ${d.term}: ${d.definition}\n`;
+    });
+    text += "\n";
+  }
+
+  if (notes.keywords.length > 0) {
+    text += `📌 KEYWORDS\n`;
+    notes.keywords.forEach(k => {
+      text += `• ${k.word} (${k.count})\n`;
+    });
+    text += "\n";
+  }
+
+  if (notes.concepts.length > 0) {
+    text += `📌 CONCEPTS\n`;
+    notes.concepts.forEach(c => {
+      text += `• ${c}\n`);
+    });
+    text += "\n";
+  }
+
+  if (notes.examNotes.length > 0) {
+    text += `📌 EXAM NOTES\n`;
+    notes.examNotes.forEach(n => {
+      text += `${n}\n`;
+    });
+    text += "\n";
+  }
+
+  if (notes.questions.length > 0) {
+    text += `📌 QUESTIONS\n`;
+    notes.questions.forEach(q => {
+      text += `${q}\n`;
+    });
+  }
+
+  return text.trim();
+}
 
 /* =========================
    CORE LOGIC – SMART NOTES
@@ -102,29 +159,25 @@ function splitIntoSentences(text) {
   const rough = text
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && s.split(" ").length > 3); // ignore too tiny fragments
+    .filter((s) => s.length > 0 && s.split(" ").length > 3);
 
   return rough;
 }
 
 function detectTopic(text, sentences) {
-  // Approach: choose 1) a frequent keyword, else 2) first sentence chunk
   const keywords = extractKeywords(text).map((k) => k.word);
   if (keywords.length > 0) {
     return keywords[0];
   }
-
   if (sentences.length > 0) {
     return sentences[0].split(" ").slice(0, 6).join(" ");
   }
-
   return "Lecture Topic";
 }
 
 function buildSummary(sentences, maxLines = 6) {
   if (sentences.length === 0) return "No summary could be generated.";
 
-  // Simple heuristic: pick some early and mid sentences
   const selected = [];
   const step = Math.max(1, Math.floor(sentences.length / maxLines));
 
@@ -153,7 +206,6 @@ function extractDefinitions(sentences, maxDefs = 8) {
   const defs = [];
 
   sentences.forEach((s) => {
-    // Look for pattern: "X is", "X are", "X refers to"
     let match =
       s.match(/(.+?)\s+is\s+(.*)/i) ||
       s.match(/(.+?)\s+are\s+(.*)/i) ||
@@ -172,10 +224,7 @@ function extractDefinitions(sentences, maxDefs = 8) {
         definition.length > 5 &&
         defs.length < maxDefs
       ) {
-        defs.push({
-          term,
-          definition,
-        });
+        defs.push({ term, definition });
       }
     }
   });
@@ -184,53 +233,15 @@ function extractDefinitions(sentences, maxDefs = 8) {
 }
 
 function trimForDefinition(str) {
-  // Remove common starters like "In operating systems", "In this chapter"
   return str.replace(/^(in|in this|in an|in the|here we|we)\s+/i, "").trim();
 }
 
 function extractKeywords(text, maxKeywords = 10) {
   const stopwords = new Set([
-    "the",
-    "is",
-    "are",
-    "a",
-    "an",
-    "of",
-    "and",
-    "or",
-    "to",
-    "in",
-    "on",
-    "for",
-    "with",
-    "that",
-    "this",
-    "by",
-    "as",
-    "from",
-    "at",
-    "be",
-    "it",
-    "we",
-    "you",
-    "they",
-    "was",
-    "were",
-    "can",
-    "could",
-    "should",
-    "would",
-    "have",
-    "has",
-    "had",
-    "not",
-    "no",
-    "yes",
-    "if",
-    "then",
-    "else",
-    "there",
-    "their",
+    "the","is","are","a","an","of","and","or","to","in","on","for","with","that",
+    "this","by","as","from","at","be","it","we","you","they","was","were","can",
+    "could","should","would","have","has","had","not","no","yes","if","then",
+    "else","there","their",
   ]);
 
   const wordCounts = {};
@@ -244,16 +255,13 @@ function extractKeywords(text, maxKeywords = 10) {
     wordCounts[w] = (wordCounts[w] || 0) + 1;
   });
 
-  const sorted = Object.entries(wordCounts)
+  return Object.entries(wordCounts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, maxKeywords)
     .map(([word, count]) => ({ word, count }));
-
-  return sorted;
 }
 
 function buildConcepts(sentences, maxConcepts = 6) {
-  // Choose slightly longer sentences as "concept explanations"
   const longOnes = sentences.filter((s) => s.split(" ").length >= 10);
   return longOnes.slice(0, maxConcepts);
 }
@@ -279,14 +287,12 @@ function buildExamNotes(sentences, topic, maxLines = 6) {
 function generateQuestions(definitions, topic, sentences, maxQ = 5) {
   const questions = [];
 
-  // From definitions: "What is TERM?"
   definitions.forEach((d) => {
     if (questions.length < maxQ) {
       questions.push(`Q: What is ${d.term}?`);
     }
   });
 
-  // If still less, add generic questions
   if (questions.length < maxQ && topic) {
     questions.push(`Q: Explain the concept of ${topic} in your own words.`);
   }
