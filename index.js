@@ -97,13 +97,14 @@ function mergeAllForDisplay(notes) {
     text += "\n";
   }
 
-  if (notes.concepts.length > 0) {
-    text += `📌 CONCEPTS\n`;
-    notes.concepts.forEach(c => {
-      text += `• ${c}\n`);
-    });
-    text += "\n";
-  }
+if (notes.concepts.length > 0) {
+  text += `📌 CONCEPTS\n`;
+  notes.concepts.forEach(c => {
+    text += `• ${c}\n`;
+  });
+  text += "\n";
+}
+
 
   if (notes.examNotes.length > 0) {
     text += `📌 EXAM NOTES\n`;
